@@ -221,3 +221,23 @@ pub struct Deposit<'info> {
     pub system_program: Program<'info, System>,
     pub token_program: Program<'info, Token>,
 }
+
+#[derive(Accounts)]
+pub struct Execute<'info> {
+    pub caller: Signer<'info>,
+
+    #[account(mut, seeds=[b"escrow", escrow.user_a.as_ref(), escrow.user_b.as_ref()], bump = escrow.bump)]
+    pub escrow: Account<'info, Escrow>,
+
+    #[account(mut, seeds=[b"vault_a", escrow.key().as_ref(), escrow.user_a_mint.as_ref()], bump = escrow.vault_a_bump, token::mint = escrow.user_a_mint, token::authority = escrow)]
+    pub vault_a: Account<'info, TokenAccount>,
+    #[account(mut, seeds=[b"vault_b", escrow.key().as_ref(), escrow.user_b_mint.as_ref()], bump = escrow.vault_b_bump, token::mint = escrow.user_b_mint, token::authority = escrow)]
+    pub vault_b: Account<'info, TokenAccount>,
+
+    #[account(mut, token::mint = escrow.user_b_mint, token::authority = escrow.user_a)]
+    pub user_a_token: Account<'info, TokenAccount>,
+    #[account(mut, token::mint = escrow.user_a_mint, token::authority = escrow.user_b)]
+    pub user_b_token: Account<'info, TokenAccount>,
+
+    pub token_program: Program<'info, Token>,
+}
