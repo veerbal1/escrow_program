@@ -1,5 +1,5 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::{Mint, Token, TokenAccount, Transfer};
+use anchor_spl::token::{CloseAccount, Mint, Token, TokenAccount, Transfer};
 
 #[error_code]
 pub enum ErrorCode {
@@ -23,6 +23,12 @@ pub enum ErrorCode {
 
     #[msg("AmountMismatch")]
     AmountMismatch,
+
+    #[msg("Deposits Not Complete")]
+    DepositsNotComplete,
+
+    #[msg("Deadline Not Passed")]
+    DeadlineNotPassed,
 }
 
 declare_id!("AsUjRV671ni3WY4NeppvNNMqTHCof8pP5rkTb3ytXvTV");
@@ -112,8 +118,8 @@ pub mod escrow_program {
             let token_program = ctx.accounts.token_program.to_account_info();
 
             let cpi_context = CpiContext::new(token_program, cpi_accounts);
-            escrow.a_deposited = true;
             token::transfer(cpi_context, amount)?;
+            escrow.a_deposited = true;
         } else {
             require!(!escrow.b_deposited, ErrorCode::AlreadyDeposited);
 
@@ -142,9 +148,165 @@ pub mod escrow_program {
             let token_program = ctx.accounts.token_program.to_account_info();
 
             let cpi_context = CpiContext::new(token_program, cpi_accounts);
-            escrow.b_deposited = true;
             token::transfer(cpi_context, amount)?;
+            escrow.b_deposited = true;
         }
+
+        Ok(())
+    }
+
+    pub fn execute(ctx: Context<Execute>) -> Result<()> {
+        let escrow = &ctx.accounts.escrow;
+
+        // Verify both users have deposited
+        require!(escrow.a_deposited, ErrorCode::DepositsNotComplete);
+        require!(escrow.b_deposited, ErrorCode::DepositsNotComplete);
+
+        // Create signer seeds for the escrow PDA
+        let user_a_key = escrow.user_a;
+        let user_b_key = escrow.user_b;
+        let bump = escrow.bump;
+        let signer_seeds: &[&[&[u8]]] = &[&[
+            b"escrow",
+            user_a_key.as_ref(),
+            user_b_key.as_ref(),
+            &[bump],
+        ]];
+
+        // Transfer vault_a tokens to user_b
+        let transfer_a_to_b = Transfer {
+            from: ctx.accounts.vault_a.to_account_info(),
+            to: ctx.accounts.user_b_token.to_account_info(),
+            authority: escrow.to_account_info(),
+        };
+        let cpi_ctx_a = CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            transfer_a_to_b,
+            signer_seeds,
+        );
+        token::transfer(cpi_ctx_a, escrow.amount_a)?;
+
+        // Transfer vault_b tokens to user_a
+        let transfer_b_to_a = Transfer {
+            from: ctx.accounts.vault_b.to_account_info(),
+            to: ctx.accounts.user_a_token.to_account_info(),
+            authority: escrow.to_account_info(),
+        };
+        let cpi_ctx_b = CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            transfer_b_to_a,
+            signer_seeds,
+        );
+        token::transfer(cpi_ctx_b, escrow.amount_b)?;
+
+        // Close vault_a and return rent to user_a
+        let close_vault_a = CloseAccount {
+            account: ctx.accounts.vault_a.to_account_info(),
+            destination: ctx.accounts.user_a.to_account_info(),
+            authority: escrow.to_account_info(),
+        };
+        let close_vault_a_ctx = CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            close_vault_a,
+            signer_seeds,
+        );
+        token::close_account(close_vault_a_ctx)?;
+
+        // Close vault_b and return rent to user_a
+        let close_vault_b = CloseAccount {
+            account: ctx.accounts.vault_b.to_account_info(),
+            destination: ctx.accounts.user_a.to_account_info(),
+            authority: escrow.to_account_info(),
+        };
+        let close_vault_b_ctx = CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            close_vault_b,
+            signer_seeds,
+        );
+        token::close_account(close_vault_b_ctx)?;
+
+        Ok(())
+    }
+
+    pub fn refund(ctx: Context<Refund>) -> Result<()> {
+        let escrow = &ctx.accounts.escrow;
+        let caller = ctx.accounts.caller.key();
+
+        // Verify caller is either user_a or user_b
+        let is_user_a = caller == escrow.user_a;
+        let is_user_b = caller == escrow.user_b;
+        require!(is_user_a || is_user_b, ErrorCode::UnknownCaller);
+
+        // Verify deadline has passed
+        let current_time = Clock::get()?.unix_timestamp;
+        require!(current_time > escrow.deadline, ErrorCode::DeadlineNotPassed);
+
+        // Create signer seeds for the escrow PDA
+        let user_a_key = escrow.user_a;
+        let user_b_key = escrow.user_b;
+        let bump = escrow.bump;
+        let signer_seeds: &[&[&[u8]]] = &[&[
+            b"escrow",
+            user_a_key.as_ref(),
+            user_b_key.as_ref(),
+            &[bump],
+        ]];
+
+        // Refund user_a if they deposited
+        if escrow.a_deposited {
+            let refund_a = Transfer {
+                from: ctx.accounts.vault_a.to_account_info(),
+                to: ctx.accounts.user_a_token.to_account_info(),
+                authority: escrow.to_account_info(),
+            };
+            let refund_a_ctx = CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                refund_a,
+                signer_seeds,
+            );
+            token::transfer(refund_a_ctx, escrow.amount_a)?;
+        }
+
+        // Refund user_b if they deposited
+        if escrow.b_deposited {
+            let refund_b = Transfer {
+                from: ctx.accounts.vault_b.to_account_info(),
+                to: ctx.accounts.user_b_token.to_account_info(),
+                authority: escrow.to_account_info(),
+            };
+            let refund_b_ctx = CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                refund_b,
+                signer_seeds,
+            );
+            token::transfer(refund_b_ctx, escrow.amount_b)?;
+        }
+
+        // Close vault_a and return rent to user_a
+        let close_vault_a = CloseAccount {
+            account: ctx.accounts.vault_a.to_account_info(),
+            destination: ctx.accounts.user_a.to_account_info(),
+            authority: escrow.to_account_info(),
+        };
+        let close_vault_a_ctx = CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            close_vault_a,
+            signer_seeds,
+        );
+        token::close_account(close_vault_a_ctx)?;
+
+        // Close vault_b and return rent to user_a
+        let close_vault_b = CloseAccount {
+            account: ctx.accounts.vault_b.to_account_info(),
+            destination: ctx.accounts.user_a.to_account_info(),
+            authority: escrow.to_account_info(),
+        };
+        let close_vault_b_ctx = CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            close_vault_b,
+            signer_seeds,
+        );
+        token::close_account(close_vault_b_ctx)?;
 
         Ok(())
     }
@@ -226,8 +388,12 @@ pub struct Deposit<'info> {
 pub struct Execute<'info> {
     pub caller: Signer<'info>,
 
-    #[account(mut, seeds=[b"escrow", escrow.user_a.as_ref(), escrow.user_b.as_ref()], bump = escrow.bump)]
+    #[account(mut, close = user_a, seeds=[b"escrow", escrow.user_a.as_ref(), escrow.user_b.as_ref()], bump = escrow.bump)]
     pub escrow: Account<'info, Escrow>,
+
+    /// CHECK: Receives rent from closed accounts
+    #[account(mut)]
+    pub user_a: AccountInfo<'info>,
 
     #[account(mut, seeds=[b"vault_a", escrow.key().as_ref(), escrow.user_a_mint.as_ref()], bump = escrow.vault_a_bump, token::mint = escrow.user_a_mint, token::authority = escrow)]
     pub vault_a: Account<'info, TokenAccount>,
@@ -237,6 +403,30 @@ pub struct Execute<'info> {
     #[account(mut, token::mint = escrow.user_b_mint, token::authority = escrow.user_a)]
     pub user_a_token: Account<'info, TokenAccount>,
     #[account(mut, token::mint = escrow.user_a_mint, token::authority = escrow.user_b)]
+    pub user_b_token: Account<'info, TokenAccount>,
+
+    pub token_program: Program<'info, Token>,
+}
+
+#[derive(Accounts)]
+pub struct Refund<'info> {
+    pub caller: Signer<'info>,
+
+    #[account(mut, close = user_a, seeds=[b"escrow", escrow.user_a.as_ref(), escrow.user_b.as_ref()], bump = escrow.bump)]
+    pub escrow: Account<'info, Escrow>,
+
+    /// CHECK: Receives rent from closed accounts
+    #[account(mut)]
+    pub user_a: AccountInfo<'info>,
+
+    #[account(mut, seeds=[b"vault_a", escrow.key().as_ref(), escrow.user_a_mint.as_ref()], bump = escrow.vault_a_bump, token::mint = escrow.user_a_mint, token::authority = escrow)]
+    pub vault_a: Account<'info, TokenAccount>,
+    #[account(mut, seeds=[b"vault_b", escrow.key().as_ref(), escrow.user_b_mint.as_ref()], bump = escrow.vault_b_bump, token::mint = escrow.user_b_mint, token::authority = escrow)]
+    pub vault_b: Account<'info, TokenAccount>,
+
+    #[account(mut, token::mint = escrow.user_a_mint, token::authority = escrow.user_a)]
+    pub user_a_token: Account<'info, TokenAccount>,
+    #[account(mut, token::mint = escrow.user_b_mint, token::authority = escrow.user_b)]
     pub user_b_token: Account<'info, TokenAccount>,
 
     pub token_program: Program<'info, Token>,
