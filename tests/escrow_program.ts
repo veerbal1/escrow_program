@@ -27,6 +27,8 @@ describe("escrow_program", () => {
 
   // PDAs
   let escrowPDA: anchor.web3.PublicKey;
+  let vaultAPDA: anchor.web3.PublicKey;
+  let vaultBPDA: anchor.web3.PublicKey;
 
   before(async () => {
     userAMint = await createMint(
@@ -88,6 +90,18 @@ describe("escrow_program", () => {
       program.programId
     );
     escrowPDA = escrowPDAExtracted;
+
+    const [vaultAPDAExtracted] = anchor.web3.PublicKey.findProgramAddressSync(
+      [Buffer.from("vault_a"), escrowPDA.toBuffer(), userAMint.toBuffer()],
+      program.programId
+    );
+    vaultAPDA = vaultAPDAExtracted;
+
+    const [vaultBPDAExtracted] = anchor.web3.PublicKey.findProgramAddressSync(
+      [Buffer.from("vault_b"), escrowPDA.toBuffer(), userBMint.toBuffer()],
+      program.programId
+    );
+    vaultBPDA = vaultBPDAExtracted;
   });
 
   // Mint
@@ -98,8 +112,8 @@ describe("escrow_program", () => {
         userATokenAccount
       );
 
-      expect(Number(userATokenAccountInfo.amount)).to.be.equal(
-        10 * DECIMAL_FACTOR
+      expect(userATokenAccountInfo.amount.toString()).to.be.equal(
+        (10 * DECIMAL_FACTOR).toString()
       );
 
       const userBTokenAccountInfo = await getAccount(
@@ -107,10 +121,11 @@ describe("escrow_program", () => {
         userBTokenAccount
       );
 
-      expect(Number(userBTokenAccountInfo.amount)).to.be.equal(
-        10 * DECIMAL_FACTOR
+      expect(userBTokenAccountInfo.amount.toString()).to.be.equal(
+        (10 * DECIMAL_FACTOR).toString()
       );
     });
+
     it("Should initialize escrow with valid parameters", async () => {
       let deadline = Math.floor(Date.now() / 1000) + 20 * 60;
       await program.methods
@@ -143,6 +158,61 @@ describe("escrow_program", () => {
       expect(escrowAccountInfo.deadline.toString()).to.be.equal(
         deadline.toString()
       );
+
+      expect(escrowAccountInfo.userA.toString()).to.be.equal(
+        user.publicKey.toString()
+      );
+
+      expect(escrowAccountInfo.userB.toString()).to.be.equal(
+        userB.publicKey.toString()
+      );
+
+      expect(escrowAccountInfo.userAMint.toString()).to.be.equal(
+        userAMint.toString()
+      );
+
+      expect(escrowAccountInfo.userBMint.toString()).to.be.equal(
+        userBMint.toString()
+      );
+
+      expect(escrowAccountInfo.bump).to.be.greaterThan(0);
+      expect(escrowAccountInfo.vaultBBump).to.be.greaterThan(0);
+      expect(escrowAccountInfo.vaultABump).to.be.greaterThan(0);
+    });
+
+    it("Should not initialize escrow with same token mint", async () => {
+      let userC = anchor.web3.Keypair.generate();
+      let deadline = Math.floor(Date.now() / 1000) + 20 * 60;
+      try {
+        await program.methods
+          .initializeEscrow(
+            new anchor.BN(100),
+            new anchor.BN(100),
+            new anchor.BN(deadline)
+          )
+          .accounts({
+            userA: user.publicKey,
+            userB: userC.publicKey,
+            userAMint: userAMint,
+            userBMint: userAMint,
+          })
+          .rpc();
+        // expect.fail("Should throw error");
+      } catch (error) {
+        expect(error.message).to.be.include("SameMintProblem");
+      }
+    });
+
+    it("test vault PDA and mint authority", async () => {
+      const vaultAInfo = await getAccount(provider.connection, vaultAPDA);
+      expect(vaultAInfo.mint.toString()).to.be.equal(userAMint.toString());
+      expect(vaultAInfo.amount.toString()).to.be.equal("0");
+      expect(vaultAInfo.owner.toString()).to.be.equal(escrowPDA.toString());
+      
+      const vaultBInfo = await getAccount(provider.connection, vaultBPDA);
+      expect(vaultBInfo.mint.toString()).to.be.equal(userBMint.toString());
+      expect(vaultBInfo.amount.toString()).to.be.equal("0");
+      expect(vaultBInfo.owner.toString()).to.be.equal(escrowPDA.toString());
     });
   });
 });

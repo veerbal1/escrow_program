@@ -29,6 +29,9 @@ pub enum ErrorCode {
 
     #[msg("Deadline Not Passed")]
     DeadlineNotPassed,
+
+    #[msg("Mint accounts should be same")]
+    SameMintProblem,
 }
 
 declare_id!("AsUjRV671ni3WY4NeppvNNMqTHCof8pP5rkTb3ytXvTV");
@@ -56,6 +59,11 @@ pub mod escrow_program {
 
         require!(amount_a > 0, ErrorCode::AmountMustBePositive);
         require!(amount_b > 0, ErrorCode::AmountMustBePositive);
+
+        require!(
+            ctx.accounts.user_a_mint.key() != ctx.accounts.user_b_mint.key(),
+            ErrorCode::SameMintProblem
+        );
 
         let escrow_account = &mut ctx.accounts.escrow;
         escrow_account.user_a = ctx.accounts.user_a.key();
@@ -166,12 +174,8 @@ pub mod escrow_program {
         let user_a_key = escrow.user_a;
         let user_b_key = escrow.user_b;
         let bump = escrow.bump;
-        let signer_seeds: &[&[&[u8]]] = &[&[
-            b"escrow",
-            user_a_key.as_ref(),
-            user_b_key.as_ref(),
-            &[bump],
-        ]];
+        let signer_seeds: &[&[&[u8]]] =
+            &[&[b"escrow", user_a_key.as_ref(), user_b_key.as_ref(), &[bump]]];
 
         // Transfer vault_a tokens to user_b
         let transfer_a_to_b = Transfer {
@@ -245,12 +249,8 @@ pub mod escrow_program {
         let user_a_key = escrow.user_a;
         let user_b_key = escrow.user_b;
         let bump = escrow.bump;
-        let signer_seeds: &[&[&[u8]]] = &[&[
-            b"escrow",
-            user_a_key.as_ref(),
-            user_b_key.as_ref(),
-            &[bump],
-        ]];
+        let signer_seeds: &[&[&[u8]]] =
+            &[&[b"escrow", user_a_key.as_ref(), user_b_key.as_ref(), &[bump]]];
 
         // Refund user_a if they deposited
         if escrow.a_deposited {
