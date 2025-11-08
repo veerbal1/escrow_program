@@ -1,8 +1,5 @@
 use anchor_lang::prelude::*;
-use anchor_spl::{
-    token::{Mint, Token, TokenAccount},
-    token_2022::spl_token_2022::pod::PodAccount,
-};
+use anchor_spl::token::{Mint, Token, TokenAccount, Transfer};
 
 #[error_code]
 pub enum ErrorCode {
@@ -11,12 +8,30 @@ pub enum ErrorCode {
 
     #[msg("Amount must be greater than 0")]
     AmountMustBePositive,
+
+    #[msg("Unknown Caller")]
+    UnknownCaller,
+
+    #[msg("Already Deposited")]
+    AlreadyDeposited,
+
+    #[msg("Wrong Mint")]
+    WrongMint,
+
+    #[msg("Token Account Authority Mismatch")]
+    TokenAccountAuthorityMismatch,
+
+    #[msg("AmountMismatch")]
+    AmountMismatch,
 }
 
 declare_id!("AsUjRV671ni3WY4NeppvNNMqTHCof8pP5rkTb3ytXvTV");
 
 #[program]
 pub mod escrow_program {
+
+    use anchor_spl::token;
+
     use super::*;
 
     pub fn initialize_escrow(
@@ -54,6 +69,82 @@ pub mod escrow_program {
         escrow_account.bump = ctx.bumps.escrow;
         escrow_account.vault_a_bump = ctx.bumps.vault_a;
         escrow_account.vault_b_bump = ctx.bumps.vault_b;
+
+        Ok(())
+    }
+
+    pub fn deposit(ctx: Context<Deposit>, amount: u64) -> Result<()> {
+        let escrow: &mut Account<'_, Escrow> = &mut ctx.accounts.escrow;
+        let caller: Pubkey = ctx.accounts.user.key();
+
+        let is_caller_user_a: bool = caller == escrow.user_a;
+        let is_caller_user_b: bool = caller == escrow.user_b;
+
+        require!(
+            is_caller_user_a || is_caller_user_b,
+            ErrorCode::UnknownCaller
+        );
+
+        if is_caller_user_a {
+            require!(!escrow.a_deposited, ErrorCode::AlreadyDeposited);
+
+            require!(escrow.amount_a == amount, ErrorCode::AmountMismatch);
+
+            let vault_a = &mut ctx.accounts.vault_a;
+
+            let user_a_token_account = &mut ctx.accounts.user_a_token;
+            require!(
+                user_a_token_account.mint == escrow.user_a_mint,
+                ErrorCode::WrongMint
+            );
+            require!(
+                user_a_token_account.owner == escrow.user_a,
+                ErrorCode::TokenAccountAuthorityMismatch
+            );
+
+            // CPI
+            let cpi_accounts = Transfer {
+                from: user_a_token_account.to_account_info(),
+                to: vault_a.to_account_info(),
+                authority: ctx.accounts.user.to_account_info(),
+            };
+
+            let token_program = ctx.accounts.token_program.to_account_info();
+
+            let cpi_context = CpiContext::new(token_program, cpi_accounts);
+            escrow.a_deposited = true;
+            token::transfer(cpi_context, amount)?;
+        } else {
+            require!(!escrow.b_deposited, ErrorCode::AlreadyDeposited);
+
+            require!(escrow.amount_b == amount, ErrorCode::AmountMismatch);
+
+            let vault_b = &mut ctx.accounts.vault_b;
+
+            let user_b_token_account = &mut ctx.accounts.user_b_token;
+
+            require!(
+                user_b_token_account.mint == escrow.user_b_mint,
+                ErrorCode::WrongMint
+            );
+
+            require!(
+                user_b_token_account.owner == escrow.user_b,
+                ErrorCode::TokenAccountAuthorityMismatch
+            );
+
+            let cpi_accounts = Transfer {
+                from: user_b_token_account.to_account_info(),
+                to: vault_b.to_account_info(),
+                authority: ctx.accounts.user.to_account_info(),
+            };
+
+            let token_program = ctx.accounts.token_program.to_account_info();
+
+            let cpi_context = CpiContext::new(token_program, cpi_accounts);
+            escrow.b_deposited = true;
+            token::transfer(cpi_context, amount)?;
+        }
 
         Ok(())
     }
@@ -107,4 +198,26 @@ pub struct InitializeEscrow<'i> {
 
     pub system_program: Program<'i, System>,
     pub token_program: Program<'i, Token>,
+}
+
+#[derive(Accounts)]
+pub struct Deposit<'info> {
+    #[account(mut)]
+    pub user: Signer<'info>,
+
+    #[account(mut, seeds=[b"escrow", escrow.user_a.as_ref(), escrow.user_b.as_ref()], bump = escrow.bump)]
+    pub escrow: Account<'info, Escrow>,
+
+    #[account(mut)]
+    pub user_a_token: Account<'info, TokenAccount>,
+    #[account(mut)]
+    pub user_b_token: Account<'info, TokenAccount>,
+
+    #[account(mut, seeds=[b"vault_a", escrow.key().as_ref(), escrow.user_a_mint.as_ref()], bump = escrow.vault_a_bump, token::mint = escrow.user_a_mint, token::authority = escrow)]
+    pub vault_a: Account<'info, TokenAccount>,
+    #[account(mut, seeds=[b"vault_b", escrow.key().as_ref(), escrow.user_b_mint.as_ref()], bump = escrow.vault_b_bump, token::mint = escrow.user_b_mint, token::authority = escrow)]
+    pub vault_b: Account<'info, TokenAccount>,
+
+    pub system_program: Program<'info, System>,
+    pub token_program: Program<'info, Token>,
 }
