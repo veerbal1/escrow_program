@@ -7,7 +7,7 @@ import {
   mintTo,
   getAccount,
 } from "@solana/spl-token";
-import { expect } from "chai";
+import { expect, use } from "chai";
 
 const DECIMAL_FACTOR = 10 ** 9;
 
@@ -130,8 +130,8 @@ describe("escrow_program", () => {
       let deadline = Math.floor(Date.now() / 1000) + 20 * 60;
       await program.methods
         .initializeEscrow(
-          new anchor.BN(100),
-          new anchor.BN(100),
+          new anchor.BN(2 * DECIMAL_FACTOR),
+          new anchor.BN(2 * DECIMAL_FACTOR),
           new anchor.BN(deadline)
         )
         .accounts({
@@ -145,11 +145,11 @@ describe("escrow_program", () => {
       const escrowAccountInfo = await program.account.escrow.fetch(escrowPDA);
 
       expect(escrowAccountInfo.amountA.toString()).to.be.equal(
-        new anchor.BN(100).toString()
+        new anchor.BN(2 * DECIMAL_FACTOR).toString()
       );
 
-      expect(escrowAccountInfo.amountB.toString()).to.be.equal(
-        new anchor.BN(100).toString()
+      expect(parseInt(escrowAccountInfo.amountB.toString())).to.be.equal(
+        new anchor.BN(2 * DECIMAL_FACTOR).toString()
       );
 
       expect(escrowAccountInfo.aDeposited).to.be.equal(false);
@@ -208,11 +208,48 @@ describe("escrow_program", () => {
       expect(vaultAInfo.mint.toString()).to.be.equal(userAMint.toString());
       expect(vaultAInfo.amount.toString()).to.be.equal("0");
       expect(vaultAInfo.owner.toString()).to.be.equal(escrowPDA.toString());
-      
+
       const vaultBInfo = await getAccount(provider.connection, vaultBPDA);
       expect(vaultBInfo.mint.toString()).to.be.equal(userBMint.toString());
       expect(vaultBInfo.amount.toString()).to.be.equal("0");
       expect(vaultBInfo.owner.toString()).to.be.equal(escrowPDA.toString());
+    });
+  });
+
+  describe("Deposit Tests", async () => {
+    it("User A successfully deposits correct amount", async () => {
+      let userAAccountInitial = await getAccount(
+        provider.connection,
+        userATokenAccount
+      );
+
+      expect(
+        parseInt(userAAccountInitial.amount.toString()) / DECIMAL_FACTOR
+      ).to.be.equal(10);
+
+      await program.methods
+        .deposit(new anchor.BN(2 * DECIMAL_FACTOR))
+        .accounts({
+          user: user.publicKey,
+          userAToken: userATokenAccount,
+          userBToken: userBTokenAccount,
+          escrow: escrowPDA,
+        })
+        .rpc();
+
+      let userAAccountAfter = await getAccount(
+        provider.connection,
+        userATokenAccount
+      );
+
+      expect(
+        parseInt(userAAccountAfter.amount.toString()) / DECIMAL_FACTOR
+      ).to.be.equal(8);
+
+      const vault_a_account = await getAccount(provider.connection, vaultAPDA);
+      expect(parseInt(vault_a_account.amount.toString())).to.be.equal(
+        2 * DECIMAL_FACTOR
+      );
     });
   });
 });
