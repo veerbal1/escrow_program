@@ -148,7 +148,7 @@ describe("escrow_program", () => {
         new anchor.BN(2 * DECIMAL_FACTOR).toString()
       );
 
-      expect(parseInt(escrowAccountInfo.amountB.toString())).to.be.equal(
+      expect(escrowAccountInfo.amountB.toString()).to.be.equal(
         new anchor.BN(2 * DECIMAL_FACTOR).toString()
       );
 
