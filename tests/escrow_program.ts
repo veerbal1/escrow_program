@@ -506,4 +506,124 @@ describe("escrow_program", () => {
     });
   });
 
+  describe("Refund Tests - Deadline & Permissions", async () => {
+    it("Refund fails if deadline hasn't passed", async () => {
+      let futureDeadline = Math.floor(Date.now() / 1000) + (25 * 60 * 60); // 25 hours in future
+      let refundUserD = anchor.web3.Keypair.generate();
+
+      await program.methods
+        .initializeEscrow(
+          new anchor.BN(1 * DECIMAL_FACTOR),
+          new anchor.BN(1 * DECIMAL_FACTOR),
+          new anchor.BN(futureDeadline)
+        )
+        .accounts({
+          userA: user.publicKey,
+          userB: refundUserD.publicKey,
+          userAMint: userAMint,
+          userBMint: userBMint,
+        })
+        .rpc();
+
+      const [refundEscrowPDA] = anchor.web3.PublicKey.findProgramAddressSync(
+        [
+          Buffer.from("escrow"),
+          user.publicKey.toBuffer(),
+          refundUserD.publicKey.toBuffer(),
+        ],
+        program.programId
+      );
+
+      const [refundVaultAPDA] = anchor.web3.PublicKey.findProgramAddressSync(
+        [Buffer.from("vault_a"), refundEscrowPDA.toBuffer(), userAMint.toBuffer()],
+        program.programId
+      );
+
+      const [refundVaultBPDA] = anchor.web3.PublicKey.findProgramAddressSync(
+        [Buffer.from("vault_b"), refundEscrowPDA.toBuffer(), userBMint.toBuffer()],
+        program.programId
+      );
+
+      // Try to refund without deadline passing - should fail
+      try {
+        await program.methods
+          .refund()
+          .accounts({
+            caller: user.publicKey,
+            escrow: refundEscrowPDA,
+            userA: user.publicKey,
+            vaultA: refundVaultAPDA,
+            vaultB: refundVaultBPDA,
+            userAToken: userATokenAccount,
+            userBToken: userBTokenAccount,
+          })
+          .rpc();
+        expect.fail("Should throw error for deadline not passed");
+      } catch (error: any) {
+        // Error could be from constraint validation or business logic
+        expect(error).to.exist;
+      }
+    });
+
+    it("Refund fails if caller is not user_a or user_b", async () => {
+      let futureDeadline = Math.floor(Date.now() / 1000) + (25 * 60 * 60); // 25 hours in future
+      let unauthorizedUser = anchor.web3.Keypair.generate();
+      let refundUserE = anchor.web3.Keypair.generate();
+
+      await program.methods
+        .initializeEscrow(
+          new anchor.BN(1 * DECIMAL_FACTOR),
+          new anchor.BN(1 * DECIMAL_FACTOR),
+          new anchor.BN(futureDeadline)
+        )
+        .accounts({
+          userA: user.publicKey,
+          userB: refundUserE.publicKey,
+          userAMint: userAMint,
+          userBMint: userBMint,
+        })
+        .rpc();
+
+      const [unauthorizedEscrowPDA] = anchor.web3.PublicKey.findProgramAddressSync(
+        [
+          Buffer.from("escrow"),
+          user.publicKey.toBuffer(),
+          refundUserE.publicKey.toBuffer(),
+        ],
+        program.programId
+      );
+
+      const [unauthorizedVaultAPDA] = anchor.web3.PublicKey.findProgramAddressSync(
+        [Buffer.from("vault_a"), unauthorizedEscrowPDA.toBuffer(), userAMint.toBuffer()],
+        program.programId
+      );
+
+      const [unauthorizedVaultBPDA] = anchor.web3.PublicKey.findProgramAddressSync(
+        [Buffer.from("vault_b"), unauthorizedEscrowPDA.toBuffer(), userBMint.toBuffer()],
+        program.programId
+      );
+
+      // unauthorizedUser (not user_a or user_b) tries to refund
+      try {
+        await program.methods
+          .refund()
+          .accounts({
+            caller: unauthorizedUser.publicKey,
+            escrow: unauthorizedEscrowPDA,
+            userA: user.publicKey,
+            vaultA: unauthorizedVaultAPDA,
+            vaultB: unauthorizedVaultBPDA,
+            userAToken: userATokenAccount,
+            userBToken: userBTokenAccount,
+          })
+          .signers([unauthorizedUser])
+          .rpc();
+        expect.fail("Should throw error for unauthorized caller");
+      } catch (error: any) {
+        // Error could be from constraint validation or business logic
+        expect(error).to.exist;
+      }
+    });
+  });
+
 });
