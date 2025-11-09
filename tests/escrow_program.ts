@@ -251,5 +251,121 @@ describe("escrow_program", () => {
         2 * DECIMAL_FACTOR
       );
     });
+
+    it("Verify tokens transferred from user_a_token to vault_a", async () => {
+      const userATokenAccountInfo = await getAccount(
+        provider.connection,
+        userATokenAccount
+      );
+
+      const vaultATokenAccountInfo = await getAccount(
+        provider.connection,
+        vaultAPDA
+      );
+
+      expect(parseInt(userATokenAccountInfo.amount.toString())).to.be.equal(
+        8 * DECIMAL_FACTOR
+      );
+
+      expect(parseInt(vaultATokenAccountInfo.amount.toString())).to.be.equal(
+        2 * DECIMAL_FACTOR
+      );
+    });
+
+    it("Verify a_deposited flag is set to true", async () => {
+      const escrowAccountInfo = await program.account.escrow.fetch(escrowPDA);
+      expect(escrowAccountInfo.aDeposited).to.be.equal(true);
+    });
+
+    it("Verify vault_a balance equals amount_a", async () => {
+      const escrowAccountInfo = await program.account.escrow.fetch(escrowPDA);
+      const vaultATokenAccountInfo = await getAccount(
+        provider.connection,
+        vaultAPDA
+      );
+
+      expect(parseInt(vaultATokenAccountInfo.amount.toString())).to.be.equal(
+        escrowAccountInfo.amountA.toNumber()
+      );
+    });
+
+    it("User B successfully deposits correct amount", async () => {
+      let userBAccountInitial = await getAccount(
+        provider.connection,
+        userBTokenAccount
+      );
+
+      expect(
+        parseInt(userBAccountInitial.amount.toString()) / DECIMAL_FACTOR
+      ).to.be.equal(10);
+
+      await program.methods
+        .deposit(new anchor.BN(2 * DECIMAL_FACTOR))
+        .accounts({
+          user: userB.publicKey,
+          userAToken: userATokenAccount,
+          userBToken: userBTokenAccount,
+          escrow: escrowPDA,
+        })
+        .signers([userB])
+        .rpc();
+
+      let userBAccountAfter = await getAccount(
+        provider.connection,
+        userBTokenAccount
+      );
+
+      expect(
+        parseInt(userBAccountAfter.amount.toString()) / DECIMAL_FACTOR
+      ).to.be.equal(8);
+
+      const vault_b_account = await getAccount(provider.connection, vaultBPDA);
+      expect(parseInt(vault_b_account.amount.toString())).to.be.equal(
+        2 * DECIMAL_FACTOR
+      );
+    });
+
+    it("Verify tokens transferred from user_b_token to vault_b", async () => {
+      const userBTokenAccountInfo = await getAccount(
+        provider.connection,
+        userBTokenAccount
+      );
+
+      const vaultBTokenAccountInfo = await getAccount(
+        provider.connection,
+        vaultBPDA
+      );
+
+      expect(parseInt(userBTokenAccountInfo.amount.toString())).to.be.equal(
+        8 * DECIMAL_FACTOR
+      );
+
+      expect(parseInt(vaultBTokenAccountInfo.amount.toString())).to.be.equal(
+        2 * DECIMAL_FACTOR
+      );
+    });
+
+    it("Verify b_deposited flag is set to true", async () => {
+      const escrowAccountInfo = await program.account.escrow.fetch(escrowPDA);
+      expect(escrowAccountInfo.bDeposited).to.be.equal(true);
+    });
+
+    it("Verify vault_b balance equals amount_b", async () => {
+      const escrowAccountInfo = await program.account.escrow.fetch(escrowPDA);
+      const vaultBTokenAccountInfo = await getAccount(
+        provider.connection,
+        vaultBPDA
+      );
+
+      expect(parseInt(vaultBTokenAccountInfo.amount.toString())).to.be.equal(
+        escrowAccountInfo.amountB.toNumber()
+      );
+    });
+
+    it("Both flags are true after both deposit", async () => {
+      const escrowAccountInfo = await program.account.escrow.fetch(escrowPDA);
+      expect(escrowAccountInfo.aDeposited).to.be.equal(true);
+      expect(escrowAccountInfo.bDeposited).to.be.equal(true);
+    });
   });
 });
