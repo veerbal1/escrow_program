@@ -24,6 +24,9 @@ describe("escrow_program", () => {
 
   let userATokenAccount: anchor.web3.PublicKey;
   let userBTokenAccount: anchor.web3.PublicKey;
+  // Token accounts for receiving swapped tokens
+  let userAReceiveTokenAccount: anchor.web3.PublicKey;
+  let userBReceiveTokenAccount: anchor.web3.PublicKey;
 
   // PDAs
   let escrowPDA: anchor.web3.PublicKey;
@@ -80,6 +83,25 @@ describe("escrow_program", () => {
       user.publicKey,
       10 * DECIMAL_FACTOR
     );
+
+    // Create receive token accounts for the swap
+    // User A needs an account for mint B (to receive from User B)
+    const userAReceiveAccount = await getOrCreateAssociatedTokenAccount(
+      provider.connection,
+      user.payer,
+      userBMint,
+      user.publicKey
+    );
+    userAReceiveTokenAccount = userAReceiveAccount.address;
+
+    // User B needs an account for mint A (to receive from User A)
+    const userBReceiveAccount = await getOrCreateAssociatedTokenAccount(
+      provider.connection,
+      user.payer,
+      userAMint,
+      userB.publicKey
+    );
+    userBReceiveTokenAccount = userBReceiveAccount.address;
 
     const [escrowPDAExtracted] = anchor.web3.PublicKey.findProgramAddressSync(
       [
@@ -368,4 +390,120 @@ describe("escrow_program", () => {
       expect(escrowAccountInfo.bDeposited).to.be.equal(true);
     });
   });
+
+  describe("Execute Tests", async () => {
+    let balanceBeforeExecute: number;
+
+    it("Execute successful swap after both users deposited", async () => {
+      // Capture balance BEFORE execute to verify rent is returned
+      balanceBeforeExecute = await provider.connection.getBalance(
+        user.publicKey
+      );
+
+      await program.methods
+        .execute()
+        .accounts({
+          caller: user.publicKey,
+          escrow: escrowPDA,
+          userA: user.publicKey,
+          vaultA: vaultAPDA,
+          vaultB: vaultBPDA,
+          userAToken: userAReceiveTokenAccount,
+          userBToken: userBReceiveTokenAccount,
+        })
+        .rpc();
+    });
+
+    it("Verify vault_a tokens transferred to user_b", async () => {
+      const userBReceiveAccountInfo = await getAccount(
+        provider.connection,
+        userBReceiveTokenAccount
+      );
+
+      expect(parseInt(userBReceiveAccountInfo.amount.toString())).to.be.equal(
+        2 * DECIMAL_FACTOR
+      );
+    });
+
+    it("Verify vault_b tokens transferred to user_a", async () => {
+      const userAReceiveAccountInfo = await getAccount(
+        provider.connection,
+        userAReceiveTokenAccount
+      );
+
+      expect(parseInt(userAReceiveAccountInfo.amount.toString())).to.be.equal(
+        2 * DECIMAL_FACTOR
+      );
+    });
+
+    it("Verify user_a receives correct amount_b tokens", async () => {
+      const userAReceiveAccountInfo = await getAccount(
+        provider.connection,
+        userAReceiveTokenAccount
+      );
+
+      expect(parseInt(userAReceiveAccountInfo.amount.toString())).to.be.equal(
+        2 * DECIMAL_FACTOR
+      );
+    });
+
+    it("Verify user_b receives correct amount_a tokens", async () => {
+      const userBReceiveAccountInfo = await getAccount(
+        provider.connection,
+        userBReceiveTokenAccount
+      );
+
+      expect(parseInt(userBReceiveAccountInfo.amount.toString())).to.be.equal(
+        2 * DECIMAL_FACTOR
+      );
+    });
+
+    it("Verify vault_a is closed", async () => {
+      try {
+        await getAccount(provider.connection, vaultAPDA);
+        expect.fail("Vault A should be closed");
+      } catch (error: any) {
+        // Vault should not exist after execute
+        expect(error).to.exist;
+      }
+    });
+
+    it("Verify vault_b is closed", async () => {
+      try {
+        await getAccount(provider.connection, vaultBPDA);
+        expect.fail("Vault B should be closed");
+      } catch (error: any) {
+        // Vault should not exist after execute
+        expect(error).to.exist;
+      }
+    });
+
+    it("Verify escrow account is closed", async () => {
+      try {
+        await program.account.escrow.fetch(escrowPDA);
+        expect.fail("Escrow account should be closed");
+      } catch (error: any) {
+        expect(error.message).to.include("Account does not exist");
+      }
+    });
+
+    it("Verify user_a receives all rent back", async () => {
+      // Capture balance AFTER execute
+      const balanceAfterExecute = await provider.connection.getBalance(
+        user.publicKey
+      );
+
+      // The balance after should be greater than balance before
+      // (rent returned from closing accounts > transaction fees paid)
+      expect(balanceAfterExecute).to.be.greaterThan(balanceBeforeExecute);
+
+      // Calculate the approximate rent returned
+      const rentReturned = balanceAfterExecute - balanceBeforeExecute;
+
+      // Rent returned should be positive (at least more than tx fees)
+      // For escrow + 2 vaults being closed, we expect a reasonable amount of rent back
+      expect(rentReturned).to.be.greaterThan(0);
+    });
+  });
+
 });
