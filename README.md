@@ -2,6 +2,23 @@
 
 A Solana smart contract implementing atomic token swaps using the **escrow pattern** - the foundational architecture for custody, conditions, and release mechanisms used across all DeFi protocols.
 
+---
+
+## ⚠️ LEARNING PROJECT - NOT FOR PRODUCTION
+
+**This is an educational implementation for learning Solana smart contract fundamentals.**
+
+**DO NOT deploy or use with real tokens or mainnet without:**
+- ✅ Professional security audit
+- ✅ Formal verification of logic
+- ✅ Additional error handling
+- ✅ Production-grade testing
+- ✅ Code review by experienced Solana developers
+
+This code serves as a learning reference to understand escrow patterns, PDAs, CPI, and Solana fundamentals. It has not been audited for production use.
+
+---
+
 ## Overview
 
 This escrow program enables two parties (User A and User B) to trustlessly swap tokens. Neither party needs to trust each other - the smart contract guarantees:
@@ -258,9 +275,13 @@ anchor test
 
 ### Deploy
 
+⚠️ **Educational use only.** Do not deploy to mainnet without security audit.
+
 ```bash
 anchor deploy
 ```
+
+For learning purposes only - use on devnet or testnet.
 
 ## Key DeFi Applications
 
@@ -317,16 +338,26 @@ This escrow pattern powers:
 - [ ] Partial fills (flexible amount swaps)
 - [ ] Timeout auto-refund (execute refund via anyone after deadline)
 
-## Security Audit Notes
+## Security Notes
 
-For production deployment, consider:
+### Learning Project Status
 
-- [ ] Formal verification of CPI calls
-- [ ] Reentrancy analysis (CPI guards)
-- [ ] Overflow/underflow checks (Rust u64 arithmetic)
-- [ ] Arithmetic precision (token decimal handling)
-- [ ] Account ownership validation
-- [ ] Missing signature checks
+This is **NOT** a production-ready contract. It is designed for educational purposes to understand Solana fundamentals.
+
+### Issues to Address for Production
+
+**This codebase would require significant work before production use:**
+
+- [ ] **Professional security audit** - Independent audit by Solana security firm
+- [ ] **Formal verification** - Proof of correctness for critical functions
+- [ ] **CPI reentrancy guards** - Additional checks for cross-program calls
+- [ ] **Overflow/underflow protection** - Comprehensive arithmetic validation
+- [ ] **Token decimal handling** - Proper handling of different token decimals
+- [ ] **Error handling** - More granular error states and recovery paths
+- [ ] **Access control** - Additional permission layers if needed
+- [ ] **Regression testing** - Extensive test suite for edge cases
+- [ ] **Code review** - Multiple expert reviews
+- [ ] **Mainnet readiness** - Monitoring, logging, upgrade mechanisms
 
 ## Resources
 
